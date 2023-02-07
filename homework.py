@@ -45,13 +45,10 @@ def check_tokens() -> None:
     message = ('Отсутствует обязательная переменная окружения: {var}. '
                'Программа принудительно остановлена.')
     if PRACTICUM_TOKEN is None:
-        logger.critical(message.format(var='PRACTICUM_TOKEN'))
         raise EnvVariableError(message.format(var='PRACTICUM_TOKEN'))
     if TELEGRAM_TOKEN is None:
-        logger.critical(message.format(var='TELEGRAM_TOKEN'))
         raise EnvVariableError(message.format(var='TELEGRAM_TOKEN'))
     if TELEGRAM_CHAT_ID is None:
-        logger.critical(message.format(var='TELEGRAM_CHAT_ID'))
         raise EnvVariableError(message.format(var='TELEGRAM_CHAT_ID'))
 
 
@@ -86,7 +83,7 @@ def check_response(response: dict) -> bool:
     """Проверка ответа API на соответствие документации."""
     if type(response) is not dict:
         raise TypeError(
-            'В ответе API структура данных не соотвествует ожиданиям. '
+            'В ответе API структура данных не соответствует ожиданиям. '
             f'Получен тип {type(response)}. Ожидается: dict'
         )
     current_date = response.get('current_date')
@@ -146,7 +143,7 @@ def main() -> None:
                 last_error_message = ''
         except Exception as error:
             if type(error) is EnvVariableError:
-                print(error)
+                logger.critical(error)
                 sys.exit()
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
