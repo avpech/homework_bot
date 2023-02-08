@@ -2,6 +2,8 @@ import logging
 import os
 import sys
 import time
+from http import HTTPStatus
+from json.decoder import JSONDecodeError
 
 import requests
 import telegram
@@ -10,6 +12,7 @@ from dotenv import load_dotenv
 from exceptions import (APIUnavailableError,
                         EnvVariableError,
                         MissingKeyError,
+                        NotJSONResponseError,
                         UnexpectedStatusError)
 
 
@@ -32,24 +35,33 @@ HOMEWORK_VERDICTS = {
 }
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-handler = logging.StreamHandler(stream=sys.stdout)
-logger.addHandler(handler)
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-handler.setFormatter(formatter)
+def init_logger() -> logging.Logger:
+    """Инициализация логгера."""
+    logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(stream=sys.stdout)
+    logger.addHandler(handler)
+    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+    handler.setFormatter(formatter)
+    return logger
+
+
+logger = init_logger()
 
 
 def check_tokens() -> None:
     """Проверка наличия обязательных переменных окружения."""
-    message = ('Отсутствует обязательная переменная окружения: {var}. '
-               'Программа принудительно остановлена.')
-    if PRACTICUM_TOKEN is None:
-        raise EnvVariableError(message.format(var='PRACTICUM_TOKEN'))
-    if TELEGRAM_TOKEN is None:
-        raise EnvVariableError(message.format(var='TELEGRAM_TOKEN'))
-    if TELEGRAM_CHAT_ID is None:
-        raise EnvVariableError(message.format(var='TELEGRAM_CHAT_ID'))
+    env_variables = {
+        PRACTICUM_TOKEN: 'PRACTICUM_TOKEN',
+        TELEGRAM_TOKEN: 'TELEGRAM_TOKEN',
+        TELEGRAM_CHAT_ID: 'TELEGRAM_CHAT_ID',
+    }
+    for env_variable, env_variable_name in env_variables.items():
+        if env_variable is None:
+            raise EnvVariableError(
+                'Отсутствует обязательная переменная окружения: '
+                f'{env_variable_name}. Программа принудительно остановлена.'
+            )
 
 
 def send_message(bot: telegram.Bot, message: str) -> None:
@@ -69,19 +81,25 @@ def get_api_answer(timestamp: int) -> dict:
             headers=HEADERS,
             params={'from_date': timestamp}
         )
-        if response.status_code != 200:
-            raise APIUnavailableError(
-                f'Эндпоинт {ENDPOINT} недоступен. '
-                f'Код ответа API: {response.status_code}'
-            )
     except requests.RequestException as error:
         raise APIUnavailableError(f'Эндпоинт {ENDPOINT} недоступен. {error}')
-    return response.json()
+
+    if response.status_code != HTTPStatus.OK:
+        raise APIUnavailableError(
+            f'Эндпоинт {ENDPOINT} недоступен. '
+            f'Код ответа API: {response.status_code}'
+        )
+    try:
+        return response.json()
+    except JSONDecodeError:
+        raise NotJSONResponseError(
+            f'API {ENDPOINT} вернул ответ не в json формате.'
+        )
 
 
-def check_response(response: dict) -> bool:
+def check_response(response: dict) -> None:
     """Проверка ответа API на соответствие документации."""
-    if type(response) is not dict:
+    if not isinstance(response, dict):
         raise TypeError(
             'В ответе API структура данных не соответствует ожиданиям. '
             f'Получен тип {type(response)}. Ожидается: dict'
@@ -92,20 +110,16 @@ def check_response(response: dict) -> bool:
         raise MissingKeyError('В ответе API отсутствует ключ current_date')
     if homeworks is None:
         raise MissingKeyError('В ответе API отсутствует ключ homeworks')
-    if type(current_date) is not int:
+    if not isinstance(current_date, int):
         raise TypeError(
             'В ответе API значение ключа current_date '
             f'имеет некорректный тип {type(current_date)}. Ожидается: int'
         )
-    if type(homeworks) is not list:
+    if not isinstance(homeworks, list):
         raise TypeError(
             'В ответе API значение ключа homeworks '
             f'имеет некорректный тип {type(homeworks)}. Ожидается: list'
         )
-    if not homeworks:
-        logger.debug('Новый статус отсутствует')
-        return False
-    return True
 
 
 def parse_status(homework: dict) -> str:
@@ -135,16 +149,20 @@ def main() -> None:
         try:
             check_tokens()
             response = get_api_answer(timestamp)
-            if check_response(response):
-                homework = response.get('homeworks')[0]
+            check_response(response)
+            homeworks = response.get('homeworks')
+            if homeworks:
+                homework = homeworks[0]
                 message = parse_status(homework)
                 send_message(bot=bot, message=message)
-                timestamp = response.get('current_date')
-                last_error_message = ''
+            else:
+                logger.debug('Новый статус отсутствует')
+            timestamp = response.get('current_date')
+            last_error_message = ''
+        except EnvVariableError as error:
+            logger.critical(error)
+            sys.exit()
         except Exception as error:
-            if type(error) is EnvVariableError:
-                logger.critical(error)
-                sys.exit()
             message = f'Сбой в работе программы: {error}'
             logger.error(message)
             if message != last_error_message:
