@@ -13,7 +13,7 @@
 ```
 - Создать и активировать виртуальное окружение (python версии 3.9)
 ```bash
-      python -3.9 -m venv venv
+      py -3.9 -m venv venv
 ```
 ```bash
       source venv/Scripts/activate
